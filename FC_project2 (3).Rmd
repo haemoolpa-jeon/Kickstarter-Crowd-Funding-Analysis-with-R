@@ -1,0 +1,326 @@
+---
+title: "FC_project2"
+author: "Team EVE"
+date: "2018년 4월 28일"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    df_print: paged
+mainfont: NanumGothic
+---
+# **서론**
+
+최근 창업에 대한 접근성이 높아졌고, 많은 사람들이 신규 창업을 고려하고 있다. 신규창업가들은 획기적인 아이디어와 빠른 실행력을 기반으로 성장하는 start-up 창업가를 꿈꾸고 있다. 하지만 그들이 간과하는 점은 start-up 창업도 여타 사업과 다르지 않게 자금조달이 무엇보다 중요하다는 점이다. 좋은 아이디어 혹은 트렌드에 맞춘 신규 기술보다 더 중요한 것이 바로 자금조달의 방법이다. 스타트업은 그 특성상 규모가 작고 인적자원과 아이디어를 제외한 나머지 인프라는 충분치 않은 경우가 많기에 대규모 투자를 기대할 수 없고 다양한 자금조달 방안을 모색해야 한다. 엔젤투자, 기술담보대출, 정부지원금등 여러 방법이 존재하고 크라우드 펀딩 역시 그 중 하나에 해당한다.
+
+현재는 다양한 방식의 크라우드 펀딩이 국내외로 존재하지만, 크라우드 펀딩의 대명사는 바로 미국의 kickstarter다. 여러 아이디어 상품이 kickstarter에서 펀딩을 받아 출시되었으며 보상형 크라우드 펀딩의 성공 가능성을 대중들과 시장에 인식시켰다. 비록k ickstarter에서 사전 심사를 받아 펀딩 프로젝트로 등록되는 단계까지 성공시켰다 할지라도, kickstarter에선 펀딩 목표금액을 달성하지 못하면 프로젝트 등록자는 단 1달러도 얻지 못하게 된다. 다시 말해 10만달러를 모금했더라도 목표가 11만 달러면 실패로 끝나는 것이다. 이런 점에서 크라우드 펀딩을 통한 자금조달을 하려는 초기 스타트업에게 목표액 달성을 위한 방법은 매우 중요하다.  
+
+이번 프로젝트에서는 2009년부터 2018년 1월까지 kickstarter에서 시행한 프로젝트 38만여 건을 데이터 셋으로 하여 성공과 실패를 예측하는 분류모델을 만들고, 어떤 요인이 성공과 실패에 중요한 영향을 미치는 지 분석해보기로 하였다. 원 데이터에 존재하는 변수는 프로젝트 카테고리, 후원자 수, 프로젝트 개시/마감일, 성공/실패 여부, 프로젝트 목표금액, 프로젝트 최종 모금액, 국가 등이 있다. 데이터에서 알 수 있듯이 프로젝트 실제 모금액이 목표금액 이상일 경우 당연히 성공으로 분류될 것이다. 하지만 실제 예측에서는 모금액을 예측할 수 없으므로 가급적 최종모금액을 직접적 변수로서 사용하는 것을 지양하기로 했다. 
+
+후원자 수의 경우에는 프로젝트 별로 변동성이 매우 크기에 확정적인 변수라고 이야기 할 수는 없다. 하지만 직관적으로 후원자 수가 증가할수록 성공확률이 높아질 가능성이 크다는 것을 알 수 있다. 단, 후원자 수 역시 사전 예측이 불가능한 점을 고려하여 예측 모델에 사용 가능한 지를 EDA를 통해 파악하고자 하였다.
+
+
+## 작업 디렉토리 설정
+```{r eval=FALSE}
+setwd("C:/R/DA/FC_project2/")
+getwd()
+
+```
+
+## 패키지 
+```{r message=FALSE, warning=FALSE}
+library(readxl)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+library(gplots)
+library(rworldmap)
+library(knitr)
+```
+
+## 데이터셋 불러오기
+```{r warning=FALSE}
+ksdf <- readxl::read_xlsx(path      = "ks-projects-201801.xlsx",
+                          sheet     = 1,
+                          col_names = TRUE)
+```
+
+## 데이터 전처리
+
+### N/A 값 체크 
+```{r}
+sapply(ksdf, function(x) sum(is.na(x)))
+
+```
+
+### 필요하지 않은 열 제거 및 NA 처리
+```{r}
+ksdf1 <- ksdf[ , -c(2, 3, 5, 7, 9, 13, 16, 17)]
+ksdf2 <- na.omit(ksdf1)
+nrow(ksdf2)
+```
+
+### POXISct 를 Date 형식으로 바꾸기
+```{r}
+ksdf2$launched_date <- as.Date(ksdf2$launched)
+ksdf2$deadline_date <- as.Date(ksdf2$deadline)
+```
+
+### state 중에 "successful" 과 "failed" 만 활용
+```{r}
+prop.table(table(ksdf2$state))*100
+ksdf3 <- dplyr::filter(ksdf2, ksdf2$state %in% c("successful", "failed"))
+
+ksdf3$state <- ifelse(ksdf3$state == "failed", 0, 1)
+ksdf3$state <- as.factor(ksdf3$state)
+
+```
+
+### 분석에 의미있는 새로운 변수 추가
+```{r}
+ksdf3$project_term <- as.integer(ksdf3$deadline_date - ksdf3$launched_date)
+
+ksdf3$AVGinvest <- ifelse(ksdf3$backers > 0, (ksdf3$usd_pledged_real / ksdf3$backers), 0)
+ksdf3$invest_ratio <- ifelse(ksdf3$AVGinvest > 0, ((ksdf3$AVGinvest / ksdf3$usd_goal_real)*100), 0)
+ksdf3$invest_ratio <- round(ksdf3$invest_ratio, digits = 2)
+
+ksdf3$launch_year <- substr(ksdf3$launched, 1,4)
+ksdf3$launch_year <- as.numeric(ksdf3$launch_year)
+```
+
+
+### 사용할 변수들 전처리
+```{r}
+table(ksdf3$country)
+ksdf3$country <- ifelse(substr(ksdf3$country,1,3) == "N,0", "UNK", ksdf3$country)
+ksdf3$country <- as.factor(ksdf3$country)
+
+ksdf3$project_term <- as.numeric(ksdf3$project_term)
+
+ksdf3$main_category <- as.factor(ksdf3$main_category)
+
+```
+
+
+## EDA
+
+### 목적변수 범주 파악하기
+```{r warning=FALSE}
+state.freq <- ksdf2 %>%
+  group_by(state) %>%
+  summarize(count=n()) %>%
+  mutate(pct = round(count/nrow(ksdf2), digits = 3)) %>% 
+  arrange(desc(count))
+
+state.freq$state <- factor(state.freq$state, levels=state.freq$state)
+
+ggplot(state.freq, aes(state, count, fill=count)) + geom_bar(stat="identity") + 
+  ggtitle("Projects by state") + xlab("") + ylab("frequency") + 
+  geom_text(aes(label=paste0(pct*100, "%")), vjust=-0.5) + theme_economist() + 
+  theme(plot.title=element_text(hjust=0.5), axis.title=element_text(size=12, face="bold"), 
+        axis.text.x=element_text(size=12), legend.position="null") + 
+  scale_fill_gradient(low="skyblue1", high="royalblue4")
+```
+
+
+### 카테고리 별 프로젝트의 수
+```{r warning=FALSE}
+cat.freq <- ksdf3 %>%
+  group_by(main_category) %>%
+  summarize(count=n()) %>%
+  arrange(desc(count))
+
+cat.freq$main_category <- factor(cat.freq$main_category, levels=cat.freq$main_category)
+
+ggplot(cat.freq, aes(main_category, count, fill=count)) + geom_bar(stat="identity") + 
+  ggtitle("Projects by category") + xlab("") + ylab("") + 
+  geom_text(aes(label=count), vjust=-0.5) + theme_economist() + 
+  theme(plot.title=element_text(hjust=0.5), axis.title=element_text(size=12, face="bold"), 
+        axis.text.x=element_text(size=12, angle=90), legend.position="null") + 
+  scale_fill_gradient(low="skyblue1", high="royalblue4") + expand_limits(y = 70000)
+```
+
+### 카테고리 별 성공률
+```{r warning=FALSE}
+state.pct <- ksdf3 %>%
+  group_by(main_category, state) %>%
+  summarize(count=n()) %>%
+  mutate(pct=count/sum(count)) %>%
+  arrange(desc(state), pct)
+
+state.pct$main_category <- factor(state.pct$main_category, 
+                                  levels=state.pct$main_category[1:(nrow(state.pct)/2)])
+
+ggplot(state.pct, aes(main_category, pct, fill=as.factor(state))) + geom_bar(stat="identity") + 
+  ggtitle("Success rate by category") + 
+  xlab("") + ylab("ratio") + scale_y_continuous(labels=scales::percent) + 
+  scale_fill_discrete(name="state", breaks=c("1", "0"),
+                      labels=c("success", "failure")) + 
+  geom_text(aes(label=paste0(round(pct*100,1),"%")), position=position_stack(vjust=0.5), 
+            colour="white", size=5)+ theme_economist() + 
+  theme(plot.title=element_text(hjust=0.5), axis.title=element_text(size=12, face="bold"), 
+        axis.text.x=element_text(size=12), legend.position="bottom", 
+        legend.title=element_text(size=12, face="bold")) + coord_flip()
+```
+
+### 프로젝트 기간과 성공률 
+```{r warning=FALSE}
+length.pct <- ksdf3 %>%
+  filter(project_term <= 61) %>%
+  group_by(project_term, state) %>%
+  summarize(count=n()) %>%
+  mutate(pct = count/sum(count))
+
+ggplot(length.pct[length.pct$state=="1",], aes(project_term, pct)) + 
+  geom_point(colour="black", size=2.5) + ggtitle("Success rate by project term") + 
+  xlab("project term(day)") + ylab("success rate") + 
+  scale_x_continuous(breaks=c(0,10,20,30,40,50,60)) + geom_vline(xintercept=30, colour="red") + 
+  theme_economist() + 
+  theme(plot.title=element_text(hjust=0.5), axis.title=element_text(size=12, face="bold"))
+```
+
+### 프로젝트 시작년도에 따른 성공률 
+```{r warning=FALSE}
+state.pct2 <- ksdf3 %>%
+  group_by(launch_year, state) %>%
+  summarize(count=n()) %>%
+  mutate(pct=count/sum(count)) %>%
+  arrange(desc(state))
+
+ggplot(state.pct2, aes(launch_year, pct, fill=as.factor(state))) + geom_bar(stat="identity") + 
+  ggtitle("Success rate by launching year") + 
+  xlab("year") + ylab("ratio") + scale_x_discrete(limits=c(2009:2017)) + 
+  scale_y_continuous(labels=scales::percent) + 
+  scale_fill_discrete(name="state", breaks=c("1", "0"),
+                      labels=c("success", "failure")) + 
+  geom_text(aes(label=paste0(round(pct*100,1),"%")), position=position_stack(vjust=0.5), 
+            colour="white", size=5) + theme_economist() + 
+  theme(plot.title=element_text(hjust=0.5), axis.title=element_text(size=12, face="bold"), 
+        axis.text.x=element_text(size=12), legend.position="bottom", 
+        legend.title=element_text(size=12, face="bold"))
+```
+
+### backers 분포
+
+```{r warning=FALSE}
+summary(ksdf3$backers)
+
+nrow(filter(ksdf3, ksdf3$backers < 116)) / nrow(ksdf3)
+nrow(filter(ksdf3, ksdf3$backers < 1000)) / nrow(ksdf3)
+
+backers.hist <- filter(ksdf3, backers < 116)
+
+ggplot(backers.hist, aes(x = backers.hist$backers)) + 
+  geom_histogram(stat = "density",binwidth = 10, fill = "royalblue4") +
+  xlab("number of backers") + ylab("density") + ggtitle("Density histogram by backers") + theme_economist() + 
+  theme(plot.title=element_text(hjust=0.5), axis.title=element_text(size=12, face="bold"), 
+        axis.text.x=element_text(size=12), legend.position="bottom", 
+        legend.title=element_text(size=12, face="bold"))
+       
+
+```
+
+
+### backers 수가 성공률에 미치는 영향
+```{r warning=FALSE}
+backers.pct <- ksdf3 %>% 
+                filter(state %in% c("0", "1"), backers < 116) %>% 
+                group_by(backers, state) %>% 
+                summarize(count = n()) %>% 
+                mutate(pct = count/sum(count))
+
+ggplot(backers.pct[backers.pct$state=="1",], aes(backers, pct)) + 
+  geom_point(colour="black", size=2.5) + ggtitle("Success rate by backers") + 
+  xlab("backers") + ylab("success rate") + 
+  scale_x_continuous(breaks=seq(from = 0, to = 120, by = 10)) + geom_vline(xintercept=20, colour="red") + 
+  theme_economist() + 
+  theme(plot.title=element_text(hjust=0.5), axis.title=element_text(size=12, face="bold"))
+```
+
+### 국가 별 프로젝트 개수
+```{r warning=FALSE}
+countries.freq <- ksdf3 %>%
+  filter(country!= "UNK") %>%
+  group_by(country) %>%
+  summarize(count=n())
+
+countries.match <- joinCountryData2Map(countries.freq, joinCode="ISO2", nameJoinColumn="country")
+
+mapCountryData(countries.match, nameColumnToPlot="count", 
+               mapTitle="Projects by country", catMethod="logFixedWidth", 
+               colourPalette="heat")
+```
+
+
+## RandomForest를 활용한 분류모델 
+
+### 표본추출(train & test data)
+```{r}
+index <- caret::createDataPartition(ksdf3$state, p = 0.7, list = FALSE)
+ksdf.train <- ksdf3[index, ]
+ksdf.test  <- ksdf3[-index, ]
+
+ksdf.train$state <- as.factor(ksdf.train$state)
+ksdf.test$state  <- as.factor(ksdf.test$state)
+
+```
+
+### 일반 decision tree로 분석(변수 결정 전)
+```{r}
+ksdf.tree <- rpart(state ~ main_category + backers + country + usd_goal_real + 
+                           launched_date + deadline_date, method="class", data = ksdf.train)
+
+rpart.plot(ksdf.tree)
+pred <- predict(ksdf.tree, ksdf.test, type = "class")
+summary(pred)
+confusionMatrix(pred, ksdf.test$state)
+```
+
+
+### 일반 decision tree로 분석(변수 결정 후)
+```{r}
+ksdf.tree2 <- rpart(state ~ main_category + backers + country + launch_year+ 
+                     project_term + invest_ratio, method="class", data = ksdf.train)
+
+rpart.plot(ksdf.tree2)
+pred <- predict(ksdf.tree2, ksdf.test, type = "class")
+summary(pred)
+confusionMatrix(pred, ksdf.test$state)
+```
+
+### Random Forest 사용 모델 훈련 
+```{r}
+ksdf.rf <- randomForest::randomForest(state ~
+                                        main_category + country + launch_year+ 
+                                        project_term + backers + invest_ratio,
+                                      data = ksdf.train, ntree = 300, importance = TRUE)
+summary(ksdf.rf)
+```
+
+
+### 변수의 중요도 확인
+```{r}
+randomForest::varImpPlot(ksdf.rf)
+```
+
+### 예측과 결과
+```{r}
+ksdf.rf.pred <- predict(ksdf.rf, ksdf.test)
+caret::confusionMatrix(ksdf.rf.pred, ksdf.test$state)
+```
+
+# **결론**
+
+최종적으로 랜덤 포레스트 알고리즘을 통해 약 99.7%의 예측 정확도를 보이는 모델을 구축했다. decision tree를 활용한 모델의 경우, 원자료에서 최종 모금액을 제외한 모든 변수를 통해 예측하였을 때 약 80% 정도의 정확도를 보였다. 최종 모금액은 사용할 수 없지만 이를 대체할 유의미한 변수를 만들기 위해 후원자 별 평균 모금액을 목표금액으로 나눈 invest_ratio 변수를 사용하여 재분석을 하였고, 약 94.6%의 정확도를 보이는 모델을 구축했다. 앞선 모델에 비해 활용성 및 정확성이 올라간 모델을 생성하였지만 조금 더 정확성을 올리기 위해 같은 변수로 랜덤 포레스트 모델을 생성, 예측 정확성을 최대한 높인 결과 99.7%의 예측 정확성을 얻게 되었다.
+
+분류 과정에 가장 중요한 영향력을 가진 변수는 후원자 수 였다. EDA 결과에서 후원자 수가 증가할 수록 성공확률이 증가하는 것을 확인하였고, 약 20명을 기준으로 성공확률이 50% 이상으로 올라가는 것을 확인할 수 있었다. 실제 분류과정에서도 이와 유사하게 18명을 기준으로 분기가 형성되는 것을 확인하였다. 
+
+그 다음으로는 역시 invest_ratio가 중요한 변수였는데, 이를 통해 후원자 수가 어느 정도 확보되었을 때 후원자들의 평균 후원금액이 프로젝트 목표금액에서 차지하는 비중을 산출하여 모금 성공 여부를 대략적으로 유추해볼 수 있었다. 나머지 변수들의 경우 큰 영향을 미치진 않았지만, 모금 프로젝트 기간의 경우 길어지면 길어질수록 성공확률이 감소한다는 것이 흥미로웠다.  
+
+이 분류모델을 이용하면 킥스타터에서 크라우드 펀딩을 진행하는 과정에서 확보되는 후원자 수와 그들의 모금액을 바탕으로 적절한 마케팅 전략을 통해 성공적인 프로젝트를 견인할 수 있을 것이다. 예를 들어 후원자 수가 충분히 확보되었을 경우, 금액별 보상 강화를 통해 invest_ratio를 높이는 방법을 사용할 수 있을 것이고, invest_ratio가 적절한 경우, 후원자 수 증대를 위한 리타게팅 마케팅 예산 투입을 하는 등 상황에 맞게 대처할 수 있을 것이다. 
+
